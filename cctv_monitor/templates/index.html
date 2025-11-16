@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../static/styles.css">
+  <link rel="stylesheet" href="{% static 'styles.css' %}">
   <!-- ...existing code... -->
 </head>
 <body>
@@ -24,22 +25,26 @@
     <aside class="control-panel">
       <section>
         <h2 class="section-title">Monitoring Setup</h2>
-        <form class="monitor-form">
+        <form class="monitor-form" id="monitorForm" method="post">
+          {% csrf_token %}
           <label class="input-group">
             <span class="input-label">CCTV YouTube Live URL</span>
-            <input type="url" placeholder="Paste YouTube Live URL">
+            <input type="url" name="youtube_url" placeholder="Paste YouTube Live URL" required>
           </label>
           <label class="input-group">
             <span class="input-label">Event to detect</span>
-            <input type="text" placeholder="e.g. Alert me if door opens">
+            <input type="text" name="event" placeholder="e.g. Alert me if door opens" required>
           </label>
-          <button type="button" class="btn-primary">Monitor</button>
+          <button type="submit" class="btn-primary">Monitor</button>
+          <p class="form-feedback" id="formFeedback" role="status" aria-live="polite"></p>
         </form>
       </section>
 
       <section class="alerts">
         <h2 class="section-title">Recent Alerts</h2>
-        <article class="alert-card">No alerts yet</article>
+        <div class="alerts-list" id="alertsList" role="log" aria-live="polite">
+          <div class="alert-card alert-card--empty">No alerts yet</div>
+        </div>
       </section>
     </aside>
 
@@ -47,13 +52,209 @@
     <section class="video-panel">
       <h2 class="section-title section-title--primary">Camera Preview</h2>
       <div class="video-wrapper">
-        <iframe
-          src="https://www.youtube.com/embed/live_stream?channel=some_channel"
-          title="Camera Preview"
-          allowfullscreen>
-        </iframe>
+        <div id="videoPlaceholder" class="video-placeholder">Waiting for stream URL…</div>
+        <video id="monitorVideo" class="video-player" controls autoplay muted playsinline hidden></video>
+      </div>
+      <p class="video-status" id="videoStatus">No monitoring session yet.</p>
+      <div class="ai-feed" aria-live="polite">
+        <h2 class="section-title section-title--primary">Live AI Feed</h2>
+        <div class="ai-feed__log" id="aiFeed" role="log">
+          <p class="ai-feed__placeholder">Monitoring responses will appear here.</p>
+        </div>
       </div>
     </section>
   </main>
+
+  <script>
+    (function () {
+      const form = document.getElementById('monitorForm');
+      if (!form) return;
+      const urlInput = form.querySelector('input[name="youtube_url"]');
+      const eventInput = form.querySelector('input[name="event"]');
+  const feedback = document.getElementById('formFeedback');
+  const aiFeed = document.getElementById('aiFeed');
+  const alertsList = document.getElementById('alertsList');
+  const videoEl = document.getElementById('monitorVideo');
+  const videoPlaceholder = document.getElementById('videoPlaceholder');
+  const videoStatus = document.getElementById('videoStatus');
+      const button = form.querySelector('.btn-primary');
+  const csrfTokenInput = form.querySelector('input[name="csrfmiddlewaretoken"]');
+  const csrfToken = csrfTokenInput ? csrfTokenInput.value : '';
+      let pollHandle = null;
+      let currentCamera = null;
+      let lastIndex = 0;
+      const seenAlerts = new Set();
+
+      const escapeHtml = (text) =>
+        String(text).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+      const formatTime = (value) => {
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return value;
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      };
+      const clearFeedPlaceholder = () => {
+        const placeholder = aiFeed.querySelector('.ai-feed__placeholder');
+        if (placeholder) placeholder.remove();
+      };
+      const ensureAlertPlaceholder = () => {
+        if (!alertsList.querySelector('.alert-card')) {
+          alertsList.innerHTML = '<div class="alert-card alert-card--empty">No alerts yet</div>';
+        }
+      };
+      const renderLog = (entry) => {
+        clearFeedPlaceholder();
+        const container = document.createElement('article');
+        container.className = 'ai-entry';
+        container.innerHTML = `
+          <span class="ai-entry__meta">Frame ${entry.frame} • ${formatTime(entry.timestamp)}</span>
+          <p>${escapeHtml(entry.message)}</p>
+        `;
+        aiFeed.appendChild(container);
+        aiFeed.scrollTop = aiFeed.scrollHeight;
+      };
+      const renderAlert = (entry) => {
+        const placeholder = alertsList.querySelector('.alert-card--empty');
+        if (placeholder) placeholder.remove();
+        const card = document.createElement('article');
+        card.className = 'alert-card alert-card--active';
+        card.innerHTML = `
+          <strong>Frame ${entry.frame}</strong>
+          <span>${escapeHtml(entry.message)}</span>
+          <time>${formatTime(entry.timestamp)}</time>
+        `;
+        alertsList.appendChild(card);
+      };
+      const stopPolling = () => {
+        if (pollHandle) {
+          clearInterval(pollHandle);
+          pollHandle = null;
+        }
+      };
+      const setVideoSource = (streamUrl) => {
+        if (!videoEl) return;
+        if (streamUrl && videoEl.src !== streamUrl) {
+          videoEl.src = streamUrl;
+          videoEl.hidden = false;
+          if (videoPlaceholder) videoPlaceholder.hidden = true;
+          videoEl.play().catch(() => {});
+        }
+      };
+
+      const updateStatusText = (data) => {
+        if (!videoStatus) return;
+        if (data.error) {
+          videoStatus.textContent = `Error: ${data.error}`;
+          return;
+        }
+        switch (data.status) {
+          case 'running':
+            videoStatus.textContent = 'Monitoring in progress…';
+            break;
+          case 'completed':
+            videoStatus.textContent = data.event_detected
+              ? 'Event detected! Monitoring complete.'
+              : 'Monitoring complete. Event not detected yet.';
+            break;
+          case 'error':
+            videoStatus.textContent = `Monitoring stopped with error${data.error ? `: ${data.error}` : ''}`;
+            break;
+          default:
+            videoStatus.textContent = 'Initializing monitoring session…';
+        }
+      };
+
+      const poll = async () => {
+        if (!currentCamera) return;
+        try {
+          const response = await fetch(`/monitor/${currentCamera}/status/?since=${lastIndex}`);
+          if (!response.ok) throw new Error('Failed to fetch updates');
+          const data = await response.json();
+          if (Array.isArray(data.logs)) {
+            data.logs.forEach((entry) => {
+              renderLog(entry);
+              lastIndex = Math.max(lastIndex, (entry.index || 0) + 1);
+            });
+          }
+          if (Array.isArray(data.alerts)) {
+            data.alerts.forEach((entry) => {
+              if (seenAlerts.has(entry.index)) return;
+              seenAlerts.add(entry.index);
+              renderAlert(entry);
+            });
+          } else {
+            ensureAlertPlaceholder();
+          }
+          if (data.stream_url) {
+            setVideoSource(data.stream_url);
+          }
+          updateStatusText(data);
+          if (data.error) {
+            feedback.textContent = data.error;
+            feedback.className = 'form-feedback form-feedback--error';
+          }
+          if (!data.active) {
+            stopPolling();
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      };
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const youtubeUrl = urlInput.value.trim();
+        const desiredEvent = eventInput.value.trim();
+        if (!youtubeUrl || !desiredEvent) {
+          feedback.textContent = 'Please provide both the live URL and the event to detect.';
+          feedback.className = 'form-feedback form-feedback--error';
+          return;
+        }
+        stopPolling();
+        seenAlerts.clear();
+        aiFeed.innerHTML = '<p class="ai-feed__placeholder">Waiting for AI responses…</p>';
+        alertsList.innerHTML = '<div class="alert-card alert-card--empty">No alerts yet</div>';
+        feedback.textContent = 'Starting monitoring...';
+        feedback.className = 'form-feedback';
+        if (videoPlaceholder) {
+          videoPlaceholder.hidden = false;
+          videoPlaceholder.textContent = 'Waiting for stream URL…';
+        }
+        if (videoEl) {
+          videoEl.pause();
+          videoEl.removeAttribute('src');
+          videoEl.load();
+          videoEl.hidden = true;
+        }
+        if (videoStatus) {
+          videoStatus.textContent = 'Initializing monitoring session…';
+        }
+        button.disabled = true;
+        try {
+          const res = await fetch('/monitor/', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+            },
+            body: JSON.stringify({ youtube_url: youtubeUrl, event: desiredEvent }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Unable to start monitoring.');
+          currentCamera = data.camera_id;
+          lastIndex = data.next_index || 0;
+          feedback.textContent = 'Monitoring active. AI responses are streaming.';
+          feedback.className = 'form-feedback form-feedback--success';
+          updateStatusText(data);
+          poll();
+          pollHandle = setInterval(poll, 5000);
+        } catch (err) {
+          feedback.textContent = err.message;
+          feedback.className = 'form-feedback form-feedback--error';
+        } finally {
+          button.disabled = false;
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

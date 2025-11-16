@@ -166,12 +166,37 @@ input[type="text"]:focus {
   background: #000;
 }
 
-.video-wrapper iframe {
+.video-wrapper iframe,
+.video-wrapper .video-player {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   border: none;
+}
+
+.video-player {
+  display: block;
+  background: #000;
+}
+
+.video-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  background: linear-gradient(135deg, rgba(31, 42, 68, 0.9), rgba(56, 116, 242, 0.6));
+  text-align: center;
+  padding: 1rem;
+}
+
+.video-status {
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 1024px) {
