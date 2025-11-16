@@ -27,13 +27,21 @@
         <form class="monitor-form">
           <label class="input-group">
             <span class="input-label">CCTV YouTube Live URL</span>
-            <input type="url" placeholder="Paste YouTube Live URL">
+            <input id="ytUrl" type="url" placeholder="Paste YouTube Live URL">
+          </label>
+          <label class="input-group">
+            <span class="input-label">Local file path (MP4)</span>
+            <input id="filePath" type="text" placeholder="/Users/ahmadabdelaal/Downloads/your_video.mp4">
           </label>
           <label class="input-group">
             <span class="input-label">Event to detect</span>
             <input type="text" placeholder="e.g. Alert me if door opens">
           </label>
-          <button type="button" class="btn-primary">Monitor</button>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button id="monitorBtn" type="button" class="btn-primary">Monitor</button>
+            <button id="stopBtn" type="button" class="btn-primary" style="background:#e11d48; color:#fff;">Stop</button>
+          </div>
+          <div id="statusText" style="margin-top:8px; font-size:12px; color:#4b84d7;"></div>
         </form>
       </section>
 
@@ -50,10 +58,196 @@
         <iframe
           src="https://www.youtube.com/embed/live_stream?channel=some_channel"
           title="Camera Preview"
-          allowfullscreen>
-        </iframe>
+          allowfullscreen></iframe>
       </div>
+      <img id="preview" alt="Backend preview" style="max-width:100%; display:block; margin-top:12px;">
     </section>
   </main>
+  <script>
+    (function () {
+      const monitorBtn = document.getElementById('monitorBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      const filePathInput = document.getElementById('filePath');
+      const ytUrlInput = document.getElementById('ytUrl');
+      const previewImg = document.getElementById('preview');
+      const statusText = document.getElementById('statusText');
+      const iframeEl = document.querySelector('.video-wrapper iframe');
+
+      let streamId = null;
+      let frameTimer = null;
+      let statusTimer = null;
+
+      function setStatus(msg) {
+        if (statusText) statusText.textContent = msg || '';
+      }
+
+      function isValidYoutubeUrl(u) {
+        return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test((u || '').trim());
+      }
+
+      function extractYoutubeId(u) {
+        try {
+          const url = new URL(u);
+          if (url.hostname.includes('youtu.be')) {
+            // e.g., https://youtu.be/VIDEO_ID
+            return url.pathname.replace('/', '') || null;
+          }
+          if (url.hostname.includes('youtube.com')) {
+            // e.g., https://www.youtube.com/watch?v=VIDEO_ID
+            const v = url.searchParams.get('v');
+            if (v) return v;
+            // Shorts or other paths not supported for live; return null
+          }
+        } catch (_) {}
+        return null;
+      }
+
+      function toEmbedUrl(u) {
+        const id = extractYoutubeId(u);
+        if (id) {
+          return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1`;
+        }
+        return null;
+      }
+
+      function stopPolling() {
+        if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
+        if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+      }
+
+      function setRunningUI(isRunning) {
+        if (monitorBtn) monitorBtn.disabled = !!isRunning;
+        if (stopBtn) stopBtn.disabled = !isRunning;
+      }
+
+      async function fetchFrame() {
+        if (!streamId) return;
+        try {
+          const resp = await fetch(`/api/frame?stream_id=${encodeURIComponent(streamId)}`, { cache: 'no-store' });
+          if (resp.status === 200) {
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            if (previewImg) previewImg.src = url;
+          } else if (resp.status === 204) {
+            // no frame yet
+          } else if (resp.status === 410) {
+            setStatus('Finished');
+            stopPolling();
+          } else {
+            // unknown error
+          }
+        } catch (e) {
+          // network error; ignore brief glitches
+        }
+      }
+
+      async function fetchStatus() {
+        if (!streamId) return;
+        try {
+          const resp = await fetch(`/api/status?stream_id=${encodeURIComponent(streamId)}`, { cache: 'no-store' });
+          if (!resp.ok) return;
+          const data = await resp.json();
+          if (data.error) {
+            setStatus(`Error: ${data.error}`);
+            stopPolling();
+            setRunningUI(false);
+            return;
+          }
+          if (data.ended) {
+            setStatus('Finished');
+            stopPolling();
+            setRunningUI(false);
+            return;
+          }
+          if (data.running) {
+            setStatus('Running…');
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      async function onMonitorClick() {
+        const path = (filePathInput && filePathInput.value || '').trim();
+        const yt = (ytUrlInput && ytUrlInput.value || '').trim();
+        if (!path && yt && !isValidYoutubeUrl(yt)) {
+          setStatus('Please paste a valid YouTube link (youtube.com or youtu.be).');
+          return;
+        }
+        // Do not alter iframe embed; backend monitoring runs independently.
+        setStatus('Starting…');
+        try {
+          const body = path
+            ? { source_type: 'file', url: path, fps_cap_preview: 60 }
+            : yt
+              ? { source_type: 'youtube_live', url: yt, fps_cap_preview: 60 }
+              : null;
+          if (!body) {
+            setStatus('Enter a local MP4 path or a YouTube Live URL.');
+            return;
+          }
+          const resp = await fetch('/api/start_stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            setStatus(data && data.error ? `Error: ${data.error}` : 'Failed to start.');
+            return;
+          }
+          streamId = data.stream_id;
+          // If YouTube, update iframe to embed the user link for true live visual
+          if (!path && yt && iframeEl) {
+            const em = toEmbedUrl(yt);
+            if (em) {
+              iframeEl.src = em;
+            }
+          }
+          setStatus('Running…');
+          // start polling
+          frameTimer = setInterval(fetchFrame, 1000);
+          statusTimer = setInterval(fetchStatus, 1000);
+          setRunningUI(true);
+        } catch (e) {
+          setStatus('Failed to start (network).');
+        }
+      }
+
+      async function onStopClick() {
+        if (!streamId) {
+          setStatus('No active stream.');
+          return;
+        }
+        setStatus('Stopping…');
+        try {
+          const resp = await fetch('/api/stop_stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stream_id: streamId })
+          });
+          if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            setStatus(data && data.error ? `Error: ${data.error}` : 'Failed to stop.');
+            return;
+          }
+          stopPolling();
+          setRunningUI(false);
+          setStatus('Stopped');
+          streamId = null;
+        } catch (e) {
+          setStatus('Failed to stop (network).');
+        }
+      }
+
+      if (monitorBtn) {
+        monitorBtn.addEventListener('click', onMonitorClick);
+      }
+      if (stopBtn) {
+        stopBtn.addEventListener('click', onStopClick);
+        setRunningUI(false);
+      }
+    })();
+  </script>
 </body>
 </html>
