@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- ...existing code... -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VisionGuard CCTV</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../static/styles.css">
+  <!-- ...existing code... -->
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="navbar__title">VisionGuard CCTV</div>
+    <div class="navbar__profile">VG</div>
+  </nav>
+
+  <!-- Main Layout -->
+  <main class="layout">
+    <!-- Control Panel -->
+    <aside class="control-panel">
+      <section>
+        <h2 class="section-title">Monitoring Setup</h2>
+        <form class="monitor-form">
+          <label class="input-group">
+            <span class="input-label">CCTV YouTube Live URL</span>
+            <input type="url" placeholder="Paste YouTube Live URL">
+          </label>
+          <label class="input-group">
+            <span class="input-label">Event to detect</span>
+            <input type="text" placeholder="e.g. Alert me if door opens">
+          </label>
+          <button type="button" class="btn-primary">Monitor</button>
+        </form>
+      </section>
+
+      <section class="alerts">
+        <h2 class="section-title">Recent Alerts</h2>
+        <article class="alert-card">No alerts yet</article>
+      </section>
+    </aside>
+
+    <!-- Video Panel -->
+    <section class="video-panel">
+      <h2 class="section-title section-title--primary">Camera Preview</h2>
+      <div class="video-wrapper">
+        <iframe
+          src="https://www.youtube.com/embed/live_stream?channel=some_channel"
+          title="Camera Preview"
+          allowfullscreen>
+        </iframe>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
