@@ -15,45 +15,159 @@
   <!-- Navbar -->
   <nav class="navbar">
     <div class="navbar__title">VisionGuard CCTV</div>
+    <div class="navbar__status-group">
+      <span class="status-label">Status:</span>
+      <div id="status-pill" class="navbar__status-pill status-pill--idle">Idle</div>
+    </div>
     <div class="navbar__profile">VG</div>
   </nav>
+  <div id="flash-message" class="flash-message"></div>
 
   <!-- Main Layout -->
   <main class="layout">
     <!-- Control Panel -->
     <aside class="control-panel">
-      <section>
+      <section class="card" style="margin-bottom:1.2rem;">
         <h2 class="section-title">Monitoring Setup</h2>
-        <form class="monitor-form">
-          <label class="input-group">
-            <span class="input-label">CCTV YouTube Live URL</span>
-            <input type="url" placeholder="Paste YouTube Live URL">
+        <form class="monitor-form" autocomplete="off">
+          <label class="input-group" style="position:relative;">
+            <span class="input-label">Video source URL</span>
+            <input id="video-url" type="url" placeholder="Paste video stream URL">
+            <div id="url-note" style="display:none; color:#888; font-size:0.92em; margin-top:4px; position:absolute; left:0; bottom:-1.2em;"></div>
           </label>
-          <label class="input-group">
-            <span class="input-label">Event to detect</span>
-            <input type="text" placeholder="e.g. Alert me if door opens">
+          <label class="input-group" style="position:relative;">
+            <span class="input-label">Event rule</span>
+            <input id="event-rule" type="text" placeholder="e.g. Alert me if door opens">
+            <div id="rule-validation" style="display:none; color:#e74c3c; font-size:0.92em; margin-top:4px; position:absolute; left:0; bottom:-1.2em;"></div>
           </label>
-          <button type="button" class="btn-primary">Monitor</button>
+          <button id="monitor-btn" type="button" class="btn-primary">Monitor</button>
         </form>
       </section>
 
-      <section class="alerts">
-        <h2 class="section-title">Recent Alerts</h2>
-        <article class="alert-card">No alerts yet</article>
-      </section>
+      <div class="card active-rule-card" style="margin-bottom:1.2rem;">
+        <h2 class="section-title">Active Rule</h2>
+        <div id="active-rule" class="active-rule-placeholder">No active rule yet.</div>
+      </div>
+
+      <div class="card detected-events-card" style="margin-bottom:0;">
+        <h2 class="section-title">Detected Events</h2>
+        <div id="events-list" class="events-list empty-events">No events yet.</div>
+      </div>
     </aside>
 
     <!-- Video Panel -->
     <section class="video-panel">
-      <h2 class="section-title section-title--primary">Camera Preview</h2>
-      <div class="video-wrapper">
-        <iframe
-          src="https://www.youtube.com/embed/live_stream?channel=some_channel"
-          title="Camera Preview"
-          allowfullscreen>
-        </iframe>
+      <div class="card camera-preview-card">
+        <h2 class="section-title section-title--primary">Camera Preview</h2>
+        <div class="video-wrapper">
+          <iframe
+            src="https://www.youtube.com/embed/live_stream?channel=some_channel"
+            title="Camera Preview"
+            allowfullscreen>
+          </iframe>
+        </div>
+      </div>
+      <div class="card event-details-card">
+        <h2 class="section-title">Event Details</h2>
+        <div id="event-details" class="event-details-placeholder">
+          Select an event on the left to see details.
+        </div>
       </div>
     </section>
   </main>
+
+  <script>
+    // IDs for all interactive elements
+    const monitorBtn = document.getElementById('monitor-btn');
+    const videoUrlInput = document.getElementById('video-url');
+    const eventRuleInput = document.getElementById('event-rule');
+    const ruleValidation = document.getElementById('rule-validation');
+    const urlNote = document.getElementById('url-note');
+    const statusPill = document.getElementById('status-pill');
+    const activeRule = document.getElementById('active-rule');
+    const eventsList = document.getElementById('events-list');
+    const eventDetails = document.getElementById('event-details');
+
+    // Dummy events
+    const dummyEvents = [
+      { time: "00:12", label: "Person enters with a package" },
+      { time: "00:34", label: "Door opens with no one entering" },
+      { time: "00:47", label: "Person leaves and closes the door" }
+    ];
+
+    function renderEvents(events) {
+      eventsList.innerHTML = '';
+      eventsList.classList.remove('empty-events');
+      if (!events || events.length === 0) {
+        eventsList.textContent = 'No events yet.';
+        eventsList.classList.add('empty-events');
+        return;
+      }
+      events.forEach((ev, idx) => {
+        const row = document.createElement('div');
+        row.className = 'event-row';
+        row.setAttribute('data-idx', idx);
+        row.innerHTML = `<span class="event-time">${ev.time}</span> <span class="event-label">${ev.label}</span>`;
+        row.addEventListener('click', function() {
+          // Remove selected from all rows
+          Array.from(eventsList.children).forEach(r => r.classList.remove('selected-event'));
+          row.classList.add('selected-event');
+          // Fill Event Details
+          eventDetails.innerHTML = `
+            <h3 style='font-size:1.08rem; font-weight:600; margin-bottom:0.5em;'>${ev.label}</h3>
+            <div style='margin-bottom:0.7em; color:#3874f2; font-weight:500;'>Time: ${ev.time}</div>
+            <p style='font-size:0.98rem; color:#444;'>At ${ev.time}, the model saw: '<span style='font-style:italic;'>${ev.label}</span>'. This matches your rule because it includes person + box + door open.</p>
+          `;
+        });
+        eventsList.appendChild(row);
+      });
+    }
+
+    function resetEventDetails() {
+      eventDetails.innerHTML = 'Select an event on the left to see details.';
+    }
+
+    monitorBtn.addEventListener('click', function() {
+      const url = videoUrlInput.value.trim();
+      const rule = eventRuleInput.value.trim();
+      ruleValidation.style.display = 'none';
+      urlNote.style.display = 'none';
+      // Validation
+      if (!rule && !url) {
+        ruleValidation.textContent = 'Please enter an event rule.';
+        ruleValidation.style.display = 'block';
+        return;
+      }
+      if (!rule) {
+        ruleValidation.textContent = 'Please enter an event rule.';
+        ruleValidation.style.display = 'block';
+        return;
+      }
+      if (!url) {
+        urlNote.textContent = 'Using sample video for this demo.';
+        urlNote.style.display = 'block';
+      }
+      // Status pill
+      statusPill.textContent = 'Analyzing…';
+      statusPill.classList.remove('status-pill--idle');
+      statusPill.classList.add('status-pill--analyzing');
+      // Active rule
+      activeRule.textContent = rule;
+      activeRule.classList.remove('active-rule-placeholder');
+      // Reset events and details
+      renderEvents([]);
+      resetEventDetails();
+      setTimeout(function() {
+        statusPill.textContent = 'Done';
+        statusPill.classList.remove('status-pill--analyzing');
+        statusPill.classList.add('status-pill--idle');
+        renderEvents(dummyEvents);
+      }, 1000);
+    });
+
+    // Initial state
+    renderEvents([]);
+    resetEventDetails();
+  </script>
 </body>
 </html>
